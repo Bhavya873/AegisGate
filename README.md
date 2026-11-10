@@ -79,7 +79,7 @@ Across four runs on this machine the median ranged from 20 to 22 ns and the wors
 
 The demo page runs the same C code in the browser. `demo/build.sh` compiles `core/`, the sim plant and `demo/demo_api.c` to WebAssembly with Emscripten. The loop is not re-implemented in JavaScript.
 
-On the page you can arm the loop, move the target angle, and break it five ways: cut the heartbeat, jam the shaft, add a gyro bias, spin the shaft too fast, or jump the target. Each one trips a different check. The log shows how many ticks the trip took (virtual time, same as the table above).
+On the page you can arm the loop, move the target angle, and break it five ways: lose the connection (heartbeat), block the motor (stall), a faulty speed sensor (gyro bias), a runaway motor (overspeed), or a sudden command change (target jump). The page uses plain words; the technical state names are shown in grey. Each one trips a different check. The log shows how many ticks the trip took (virtual time, same as the table above).
 
 ```bash
 ./demo.sh

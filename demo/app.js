@@ -1,25 +1,28 @@
 var STATE_NAMES = ["INIT", "ARMED", "RUNNING", "TRIPPED"];
+var STATE_BIG = ["Warming up", "Ready", "Running", "Guard stopped the motor"];
 var FAULT_NAMES = ["NONE", "TRACKING", "VELOCITY", "HEARTBEAT", "DISAGREE", "STALL", "NUMERIC", "INTERNAL"];
-var FAULT_LABELS = ["Cut heartbeat", "Jam shaft", "Bad gyro", "Spin too fast"];
+var BREAK_LABELS = ["Lose connection", "Block the motor", "Faulty speed sensor", "Runaway motor", "Sudden command change"];
+var BREAK_FAULT = [3, 5, 4, 2, 1];
 var FAULT_TEXT = [
   "",
-  "The shaft was too far from the target.",
-  "The shaft was spinning too fast.",
-  "The heartbeat from the host stopped.",
-  "The gyro and the encoder did not agree.",
-  "The motor was pushing but the shaft did not move.",
+  "The arm was too far from where it should be.",
+  "The arm was moving too fast.",
+  "The controller stopped talking to the guard.",
+  "The two speed sensors did not agree.",
+  "The motor was pushing but the arm did not move.",
   "A sensor value was not a number.",
   "Internal error."
 ];
 var HISTORY_SIZE = 2000;
 var TICK_MS = 5;
+var MAX_SPEED = 12;
 
 var samples = [];
 var logLines = [];
-var faultOn = [false, false, false, false];
 var lastState = -1;
 var lastTick = 0;
 var pendingFault = null;
+var tripMs = -1;
 var target = 0;
 var latest = null;
 var lastFrameTime = 0;
@@ -30,61 +33,48 @@ var dial = document.getElementById("dial").getContext("2d");
 var chart = document.getElementById("chart").getContext("2d");
 
 function start() {
-  document.getElementById("btn-arm").onclick = function () { Module._demo_send(1); };
+  document.getElementById("btn-start").onclick = function () { Module._demo_send(1); };
   document.getElementById("btn-stop").onclick = function () { Module._demo_send(2); };
   document.getElementById("btn-reset").onclick = function () { Module._demo_send(3); };
   document.getElementById("btn-start-over").onclick = startOver;
-  document.getElementById("btn-jump").onclick = jumpReference;
   document.getElementById("target").oninput = moveSlider;
 
-  for (var i = 0; i < 4; i++) {
-    setupFaultButton(i);
+  for (var i = 0; i < 5; i++) {
+    setupBreakButton(i);
   }
 
   Module._demo_reset();
   requestAnimationFrame(frame);
 }
 
-function setupFaultButton(n) {
-  document.getElementById("fault-" + n).onclick = function () {
-    toggleFault(n);
+function setupBreakButton(n) {
+  document.getElementById("break-" + n).onclick = function () {
+    breakIt(n);
   };
 }
 
-function toggleFault(n) {
-  faultOn[n] = !faultOn[n];
-  Module._demo_set_fault(n, faultOn[n] ? 1 : 0);
-  showFaultButton(n);
-  if (faultOn[n]) {
-    addLog(FAULT_LABELS[n] + " turned ON");
-    pendingFault = { tick: lastTick, name: FAULT_LABELS[n] };
+function breakIt(n) {
+  if (n === 4) {
+    Module._demo_jump_ref();
   } else {
-    addLog(FAULT_LABELS[n] + " turned off");
-    pendingFault = null;
+    Module._demo_set_fault(n, 1);
   }
-}
-
-function showFaultButton(n) {
-  var button = document.getElementById("fault-" + n);
-  if (faultOn[n]) {
-    button.className = "on";
-    button.textContent = FAULT_LABELS[n] + " (ON)";
-  } else {
-    button.className = "";
-    button.textContent = FAULT_LABELS[n];
+  if (n === 1) {
+    var newTarget = target + 0.6;
+    if (newTarget > 1.5) {
+      newTarget = target - 0.6;
+    }
+    document.getElementById("target").value = newTarget;
+    moveSlider();
   }
-}
-
-function jumpReference() {
-  Module._demo_jump_ref();
-  addLog("Jump target");
-  pendingFault = { tick: lastTick, name: "Jump target" };
+  addLog(BREAK_LABELS[n]);
+  pendingFault = { tick: lastTick, name: BREAK_LABELS[n] };
 }
 
 function moveSlider() {
   target = parseFloat(document.getElementById("target").value);
   Module._demo_set_target(target);
-  document.getElementById("target-value").textContent = target.toFixed(2);
+  document.getElementById("target-value").textContent = Math.round(target * 180 / Math.PI) + " deg";
 }
 
 function startOver() {
@@ -95,12 +85,9 @@ function startOver() {
   lastState = -1;
   lastTick = 0;
   pendingFault = null;
+  tripMs = -1;
   document.getElementById("target").value = 0;
   moveSlider();
-  for (var i = 0; i < 4; i++) {
-    faultOn[i] = false;
-    showFaultButton(i);
-  }
   document.getElementById("log").textContent = "";
 }
 
@@ -138,6 +125,8 @@ function frame(now) {
   }
 
   showStatus();
+  showButtons();
+  showLights();
   drawDial();
   drawChart();
   requestAnimationFrame(frame);
@@ -148,7 +137,7 @@ function readSample() {
     tick: Module._demo_tick_count(),
     angle: Module._demo_angle(),
     ref: Module._demo_ref(),
-    duty: Module._demo_duty(),
+    speed: Module._demo_speed(),
     state: Module._demo_state(),
     fault: Module._demo_fault()
   };
@@ -160,13 +149,20 @@ function readSample() {
     var text = STATE_NAMES[lastState] + " -> " + STATE_NAMES[s.state];
     if (s.state === 3) {
       text = text + " (" + FAULT_NAMES[s.fault] + ")";
+      for (var i = 0; i < 4; i++) {
+        Module._demo_set_fault(i, 0);
+      }
     }
     addLog(text);
     if (s.state === 3 && pendingFault !== null) {
       var ticks = s.tick - pendingFault.tick;
-      addLog("tripped " + ticks + " ticks (" + ticks * TICK_MS + " ms) after " + pendingFault.name);
-      pendingFault = null;
+      tripMs = ticks * TICK_MS;
+      addLog("tripped " + ticks + " ticks (" + tripMs + " ms) after " + pendingFault.name);
     }
+    if (s.state !== 3) {
+      tripMs = -1;
+    }
+    pendingFault = null;
   }
   lastState = s.state;
 }
@@ -178,15 +174,61 @@ function showStatus() {
     return;
   }
   statusBox.className = classNames[s.state];
-  document.getElementById("state-name").textContent = STATE_NAMES[s.state];
-  if (s.state === 3) {
-    document.getElementById("fault-text").textContent = FAULT_TEXT[s.fault] + " Motor is off. Press Reset, then Arm.";
+  document.getElementById("state-big").textContent = STATE_BIG[s.state];
+  document.getElementById("state-tech").textContent = STATE_NAMES[s.state];
+
+  var power = document.getElementById("power");
+  if (s.state === 2) {
+    power.textContent = "ON";
+    power.className = "power-on";
   } else {
-    document.getElementById("fault-text").textContent = "";
+    power.textContent = "OFF";
+    power.className = s.state === 3 ? "power-red" : "power-grey";
   }
-  document.getElementById("r-time").textContent = (s.tick * TICK_MS / 1000).toFixed(2);
-  document.getElementById("r-angle").textContent = s.angle.toFixed(2);
-  document.getElementById("r-duty").textContent = Math.round(s.duty / 10);
+
+  var hint = "";
+  if (s.state === 1) {
+    hint = "Press Start motor.";
+  } else if (s.state === 2) {
+    hint = "Move the arm, or break something below.";
+  } else if (s.state === 3) {
+    hint = FAULT_TEXT[s.fault] + " The guard cut the power";
+    if (tripMs >= 0) {
+      hint = hint + " in " + tripMs + " ms (simulated time)";
+    }
+    hint = hint + ". " + nextStep(s);
+  }
+  document.getElementById("hint").textContent = hint;
+}
+
+function nextStep(s) {
+  if (Math.abs(s.angle) > 2) {
+    return "Press Start over.";
+  }
+  if (Math.abs(s.speed) > MAX_SPEED) {
+    return "Wait for the arm to slow down.";
+  }
+  return "Press Reset, then Start motor.";
+}
+
+function showButtons() {
+  var s = latest;
+  if (s === null) {
+    return;
+  }
+  document.getElementById("btn-start").disabled = s.state !== 1;
+  document.getElementById("btn-stop").disabled = s.state !== 2;
+  document.getElementById("btn-reset").disabled = !(s.state === 3 && Math.abs(s.speed) <= MAX_SPEED);
+  for (var i = 0; i < 5; i++) {
+    document.getElementById("break-" + i).disabled = s.state !== 2;
+  }
+}
+
+function showLights() {
+  for (var i = 0; i < 5; i++) {
+    var on = latest !== null && latest.state === 3 && latest.fault === BREAK_FAULT[i];
+    document.getElementById("light-" + i).className = on ? "light on" : "light";
+  }
 }
 
 function drawDial() {
@@ -199,82 +241,101 @@ function drawDial() {
   dial.beginPath();
   dial.arc(cx, cy, r, 0, 2 * Math.PI);
   dial.stroke();
-  dial.fillStyle = "#444";
-  dial.font = "12px Arial";
-  dial.fillText("0", cx - 3, cy - r - 4);
   if (latest === null) {
     return;
   }
-  drawNeedle(latest.ref, "#888", true);
-  drawNeedle(latest.angle, "#1a5fb4", false);
-}
 
-function drawNeedle(angle, color, dashed) {
-  var a = angle - Math.PI / 2;
-  dial.strokeStyle = color;
-  dial.lineWidth = 3;
-  dial.setLineDash(dashed ? [6, 4] : []);
+  var t = latest.ref - Math.PI / 2;
+  dial.strokeStyle = "#888";
+  dial.lineWidth = 2;
+  dial.setLineDash([4, 4]);
   dial.beginPath();
-  dial.moveTo(110, 110);
-  dial.lineTo(110 + 85 * Math.cos(a), 110 + 85 * Math.sin(a));
+  dial.moveTo(cx + 60 * Math.cos(t), cy + 60 * Math.sin(t));
+  dial.lineTo(cx + r * Math.cos(t), cy + r * Math.sin(t));
   dial.stroke();
   dial.setLineDash([]);
+
+  var color = "#888";
+  if (latest.state === 2) {
+    color = "#26a269";
+  } else if (latest.state === 3) {
+    color = "#c01c28";
+  }
+  var a = latest.angle - Math.PI / 2;
+  dial.strokeStyle = color;
+  dial.fillStyle = color;
+  dial.lineWidth = 5;
+  dial.beginPath();
+  dial.moveTo(cx, cy);
+  dial.lineTo(cx + 80 * Math.cos(a), cy + 80 * Math.sin(a));
+  dial.stroke();
+  dial.beginPath();
+  dial.arc(cx, cy, 7, 0, 2 * Math.PI);
+  dial.fill();
+}
+
+function chartX(tick, endTick) {
+  return 50 + 550 * (tick - (endTick - HISTORY_SIZE)) / HISTORY_SIZE;
 }
 
 function drawChart() {
   var left = 50;
-  var width = 790;
-  var angleTop = 10;
-  var angleHeight = 150;
-  var dutyTop = 190;
-  var dutyHeight = 50;
+  var width = 550;
+  var top = 10;
+  var height = 160;
   var endTick = Math.max(lastTick, HISTORY_SIZE);
 
-  chart.clearRect(0, 0, 860, 260);
+  chart.clearRect(0, 0, 620, 200);
   chart.font = "12px Arial";
   chart.lineWidth = 1;
-  drawAxes(left, width, angleTop, angleHeight);
-  drawAxes(left, width, dutyTop, dutyHeight);
 
-  chart.fillStyle = "#444";
-  chart.fillText("2", 30, angleTop + 10);
-  chart.fillText("0", 30, angleTop + angleHeight / 2 + 4);
-  chart.fillText("-2", 24, angleTop + angleHeight);
-  chart.fillText("rad", 4, angleTop + angleHeight / 2 + 4);
-  chart.fillText("1000", 14, dutyTop + 10);
-  chart.fillText("-1000", 8, dutyTop + dutyHeight);
-  chart.fillText("duty", 14, dutyTop + dutyHeight / 2 + 4);
-  chart.fillText("-10 s", left, 256);
-  chart.fillText("now", left + width - 22, 256);
-  chart.fillStyle = "#1a5fb4";
-  chart.fillText("blue = angle", 330, 256);
-  chart.fillStyle = "#c01c28";
-  chart.fillText("red = target", 420, 256);
-  chart.fillStyle = "#26a269";
-  chart.fillText("green = duty", 520, 256);
+  chart.fillStyle = "#eee";
+  var runStart = -1;
+  for (var i = 0; i < samples.length; i++) {
+    var x = chartX(samples[i].tick, endTick);
+    if (samples[i].state === 3 && runStart < 0) {
+      runStart = x;
+    }
+    if (samples[i].state !== 3 && runStart >= 0) {
+      chart.fillRect(runStart, top, x - runStart, height);
+      runStart = -1;
+    }
+  }
+  if (runStart >= 0) {
+    chart.fillRect(runStart, top, chartX(lastTick, endTick) - runStart, height);
+  }
 
-  drawLine("ref", "#c01c28", left, width, angleTop, angleHeight, 2, endTick);
-  drawLine("angle", "#1a5fb4", left, width, angleTop, angleHeight, 2, endTick);
-  drawLine("duty", "#26a269", left, width, dutyTop, dutyHeight, 1000, endTick);
-}
-
-function drawAxes(left, width, top, height) {
   chart.strokeStyle = "#aaa";
   chart.strokeRect(left, top, width, height);
   chart.beginPath();
   chart.moveTo(left, top + height / 2);
   chart.lineTo(left + width, top + height / 2);
   chart.stroke();
+
+  chart.fillStyle = "#444";
+  chart.fillText("2", 36, top + 10);
+  chart.fillText("0", 36, top + height / 2 + 4);
+  chart.fillText("-2", 30, top + height);
+  chart.fillText("rad", 6, top + height / 2 + 4);
+  chart.fillText("-10 s", left, 192);
+  chart.fillText("now", left + width - 22, 192);
+  chart.fillStyle = "#1a5fb4";
+  chart.fillText("arm", 250, 192);
+  chart.fillStyle = "#c01c28";
+  chart.fillText("target", 300, 192);
+
+  drawLine("ref", "#c01c28", top, height, endTick);
+  drawLine("angle", "#1a5fb4", top, height, endTick);
 }
 
-function drawLine(field, color, left, width, top, height, range, endTick) {
+function drawLine(field, color, top, height, endTick) {
   chart.strokeStyle = color;
   chart.lineWidth = 2;
   chart.beginPath();
   for (var i = 0; i < samples.length; i++) {
-    var x = left + width * (samples[i].tick - (endTick - HISTORY_SIZE)) / HISTORY_SIZE;
-    var value = Math.max(-range, Math.min(range, samples[i][field]));
-    var y = top + height / 2 - value / range * height / 2;
+    var x = chartX(samples[i].tick, endTick);
+    var value = Math.max(-2, Math.min(2, samples[i][field]));
+    var y = top + height / 2 - value / 2 * height / 2;
     if (i === 0) {
       chart.moveTo(x, y);
     } else {
