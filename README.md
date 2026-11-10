@@ -75,17 +75,39 @@ cmake --build build-release --target aegis_bench
 
 Across four runs on this machine the median ranged from 20 to 22 ns and the worst batch from 120 to 216 ns. The workload is the nominal scenario's recorded inputs replayed open loop. The bench first checks that the replay reproduces the closed-loop trace exactly. Per-call timing is not reported because `CLOCK_MONOTONIC` on macOS ticks in 1 µs. This is a laptop under a general-purpose OS, not a microcontroller or an RTOS; hardware cost is **not measured yet**.
 
-## Demo
+## Demo: one arm with the gate, one without
 
-The demo page runs the same C code in the browser. `demo/build.sh` compiles `core/`, the sim plant and `demo/demo_api.c` to WebAssembly with Emscripten. The loop is not re-implemented in JavaScript.
+The demo page shows a two-joint arm twice. Both arms run the same scripted sweep from the same host commands. The left arm has no gate. The right arm has one AegisGate instance per joint. One button injects the same fault into both, and the page shows the gated arm stopping while the other keeps going.
 
-On the page you can arm the loop, move the target angle, and break it five ways: lose the connection (heartbeat), block the motor (stall), a faulty speed sensor (gyro bias), a runaway motor (overspeed), or a sudden command change (target jump). The page uses plain words; the technical state names are shown in grey. Each one trips a different check. The log shows how many ticks the trip took (virtual time, same as the table above).
+It runs the same C code in the browser. `demo/build.sh` compiles `core/`, `sim/src/plant.c`, `sim/src/arm.c` and `demo/demo_api.c` to WebAssembly with Emscripten. The loop is not re-implemented in JavaScript. The page only draws the joint angles it reads back.
+
+What the arm is, and is not:
+
+- Two independent joints, each the same 1-DOF plant as the campaign above. There is no coupling between the links and no gravity.
+- Each joint has its own `aegis_ctx_t` and is stepped by the same `aegis_step()`. When one joint trips, the arm loop sends `STOP` to the other joint, which takes effect on the next tick.
+- The no-gate arm uses the same estimator and PID, and its output goes straight to the motor, clamped to ±1000. If the host goes silent it keeps the last duty it was given. It is a baseline to compare against, not a model of any real controller.
+
+Results from `results/sim/arm_trips.csv`, virtual time only (`sim-virtual`). The fault starts at tick 300 on the shoulder joint and the run is 800 ticks (4 s). Produced on an Apple M1 Pro (Darwin arm64) on 2026-11-10 by:
+
+```bash
+./build/aegis_arm
+```
+
+| Fault | What is injected | Gate check | sim-virtual latency | Gated arm at the end | No-gate arm at the end |
+|---|---|---|---|---|---|
+| none | nothing | no trip | no trip | still following the sweep | still following the sweep |
+| Joint jams | shoulder cannot move | stall | 115000 µs (onset 300, trip 323) | duty 0 | still commanding duty -950, joint stuck |
+| Joint sensor lies | shoulder encoder count freezes | encoder/IMU disagreement | 80000 µs (onset 300, trip 316) | duty 0, stopped | shoulder spinning at -19.0 rad/s |
+| Controller goes silent | host stops sending | heartbeat | 50000 µs (onset 300, trip 310) | duty 0, stopped | holding duty -34, shoulder drifting at -0.68 rad/s |
+| Joint runs away | host shoulder target runs off at 25 rad/s | tracking error | 10000 µs (onset 300, trip 302) | duty 0, stopped | shoulder spinning at 19.0 rad/s |
+
+After every trip the largest gated duty from two ticks after the trip to the end of the run was 0 (`gated_max_duty_after_trip`). Hardware behaviour is **not measured yet**.
 
 ```bash
 ./demo.sh
 ```
 
-This builds, runs the tests and the fault campaign, and serves the page at http://localhost:8080. To only serve the page:
+This builds, runs the tests, the fault campaign and the arm comparison, and serves the page at http://localhost:8080. To only serve the page:
 
 ```bash
 python3 -m http.server 8080 --directory demo
@@ -106,13 +128,14 @@ cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/aegis_lockstep --out results/sim/fault_trips.csv --trace results/sim/traces
+./build/aegis_arm
 ```
 
-`ctest` runs two executables. `aegis_tests` is 18 Unity tests: each invariant, the arbiter property, SPSC order and drop, a pthread producer/consumer check (`received + dropped == produced`), deterministic replay, open-loop replay of recorded inputs, and no commanded motion after a trip. `aegis_demo_tests` is 11 tests of the demo glue in `demo/demo_api.c`: every injected fault trips with the expected fault, duty stays 0 after a trip, reset goes to `ARMED`, and arming needs a heartbeat.
+`ctest` runs two executables. `aegis_tests` is 18 Unity tests: each invariant, the arbiter property, SPSC order and drop, a pthread producer/consumer check (`received + dropped == produced`), deterministic replay, open-loop replay of recorded inputs, and no commanded motion after a trip. `aegis_demo_tests` is 7 tests of the arm glue in `demo/demo_api.c`: with no fault both arms follow the sweep and the gate does not trip, each of the four faults trips the gated arm with the expected check and its duty stays 0 afterwards, the no-gate arm is still powered or moving under the same fault, and two runs with the same inputs give identical output.
 
 ## Limits
 
-- One axis, one simplified 1-DOF plant. The gains are for that model, not a measured motor.
+- One simplified 1-DOF plant per joint. The demo arm is two of them side by side, not a coupled arm model. The gains are for that model, not a measured motor.
 - Trip times above are virtual-time tick counts, not a hardware deadline and not a wall-clock measurement.
 - No FreeRTOS, no microcontroller, no authenticated reset.
 - The host campaign is not a real-time schedule. Do not read the drop counts as a logging-rate benchmark; the run fills the ring on purpose.
