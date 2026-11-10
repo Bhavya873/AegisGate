@@ -20,7 +20,7 @@ add_library(aegis_core
     core/src/safety.c
 )
 
-add_library(aegis_sim sim/src/plant.c sim/src/lockstep.c)
+add_library(aegis_sim sim/src/plant.c sim/src/lockstep.c sim/src/arm.c)
 target_link_libraries(aegis_sim aegis_core)
 
 add_library(aegis_demo demo/demo_api.c)
@@ -28,6 +28,9 @@ target_link_libraries(aegis_demo aegis_sim)
 
 add_executable(aegis_lockstep sim/src/lockstep_main.c)
 target_link_libraries(aegis_lockstep aegis_sim)
+
+add_executable(aegis_arm sim/src/arm_main.c)
+target_link_libraries(aegis_arm aegis_sim)
 
 add_executable(aegis_bench sim/src/bench_main.c)
 target_link_libraries(aegis_bench aegis_sim)

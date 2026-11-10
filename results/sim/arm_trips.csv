@@ -1,0 +1,9 @@
+# provenance=sim-virtual
+# period_us=5000 ticks=800 fault_joint=0
+# latency_us=(trip_tick-onset_tick)*period_us
+fault,onset_tick,gated_tripped,gated_check,trip_tick,latency_us,gated_max_duty_after_trip,gated_final_speed_rad_s,nogate_max_duty_after_onset,nogate_final_duty,nogate_final_speed_rad_s,nogate_final_angle_rad
+none,300,0,NONE,,,0,0.807253,365,24,0.807253,-0.036577
+joint_jam,300,1,STALL,323,115000,0,0.000000,950,-950,0.000000,0.434729
+encoder_frozen,300,1,DISAGREE,316,80000,0,-0.000112,950,-950,-18.998810,-40.653889
+host_silent,300,1,HEARTBEAT,310,50000,0,-0.000019,34,-34,-0.680009,-1.320798
+runaway_command,300,1,TRACKING,302,10000,0,-0.000005,950,950,18.999166,42.959393

@@ -41,6 +41,19 @@
 #define AEGIS_RAMP_END_RAD 0.50f
 #define AEGIS_RAMP_VEL_RAD_S 0.50f
 
+#define AEGIS_ARM_JOINTS 2
+#define AEGIS_ARM_LINK0_M 0.30f
+#define AEGIS_ARM_LINK1_M 0.22f
+#define AEGIS_ARM_POSE_A0_RAD -0.80f
+#define AEGIS_ARM_POSE_A1_RAD 0.70f
+#define AEGIS_ARM_POSE_B0_RAD 0.80f
+#define AEGIS_ARM_POSE_B1_RAD -0.70f
+#define AEGIS_ARM_SWEEP_S 2.0f
+#define AEGIS_ARM_FAULT_JOINT 0
+#define AEGIS_ARM_RUNAWAY_RAD_S 25.0f
+#define AEGIS_ARM_FAULT_ONSET_TICK 300u
+#define AEGIS_ARM_RUN_TICKS 800u
+
 _Static_assert(AEGIS_PERIOD_US == 5000u, "lockstep period is 5 ms");
 _Static_assert(AEGIS_STALL_TICKS >= 1u, "stall window");
 _Static_assert(AEGIS_TRACK_TICKS >= 1u, "tracking debounce");
@@ -51,5 +64,7 @@ _Static_assert(AEGIS_HB_TIMEOUT_US > AEGIS_PERIOD_US, "heartbeat longer than one
 _Static_assert((AEGIS_SPSC_CAP & (AEGIS_SPSC_CAP - 1u)) == 0u, "spsc capacity");
 _Static_assert(AEGIS_ENC_COUNTS_PER_REV > 0, "encoder counts");
 _Static_assert(AEGIS_RAMP_END_TICK > AEGIS_RAMP_START_TICK, "ramp");
+_Static_assert(AEGIS_ARM_FAULT_JOINT < AEGIS_ARM_JOINTS, "arm fault joint");
+_Static_assert(AEGIS_ARM_RUN_TICKS > AEGIS_ARM_FAULT_ONSET_TICK, "arm run length");
 
 #endif
