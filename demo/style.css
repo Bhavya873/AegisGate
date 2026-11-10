@@ -1,129 +1,33 @@
 body {
-  font-family: Arial, sans-serif;
-  background: #f7f7f7;
-  color: #222;
-  margin: 0;
-  line-height: 1.4;
+  margin: 12px;
 }
 
-#page {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 16px;
-  background: white;
-}
-
-h2 {
-  margin-top: 28px;
-  font-size: 20px;
-}
-
-.note { color: #666; font-size: 14px; }
-
-#status {
-  border: 1px solid #888;
-  border-radius: 4px;
-  padding: 12px;
-  margin: 16px 0;
-}
-
-#state-big {
-  font-size: 32px;
-  font-weight: bold;
-}
-
-#state-tech {
-  font-size: 14px;
-  color: #777;
-}
-
-#hint {
-  min-height: 22px;
-  margin-top: 6px;
-}
-
-.power-on { color: #1e7a1e; font-weight: bold; }
-
-.power-red { color: #c01c28; font-weight: bold; }
-
-.power-grey { color: #777; }
-
-.state-init { background: #dddddd; }
-
-.state-armed { background: #bcd7f5; }
-
-.state-running { background: #b9e6b9; }
-
-.state-tripped { background: #f2b5b5; }
-
-.row { margin: 10px 0; }
-
-.break-row { margin: 8px 0; }
-
-button {
-  font-size: 14px;
-  padding: 6px 12px;
-  margin: 0 6px 6px 0;
-  border: 1px solid #888;
-  border-radius: 4px;
-  background: #eeeeee;
-  cursor: pointer;
-}
-
-button:disabled {
-  color: #999;
-  cursor: default;
-}
-
-.break-row button {
-  width: 200px;
-}
-
-.light {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  margin-right: 8px;
-  border: 1px solid #888;
-  border-radius: 50%;
-  background: #cccccc;
-  vertical-align: middle;
-}
-
-.light.on { background: #c01c28; border-color: #8a1019; }
-
-input[type=range] {
-  width: 300px;
-  max-width: 50%;
-  vertical-align: middle;
-}
-
-#graphics {
+#panels {
   display: flex;
-  flex-wrap: wrap;
-  margin-top: 20px;
+  gap: 12px;
+}
+
+.panel {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid black;
+  padding: 8px;
 }
 
 canvas {
-  max-width: 100%;
-  border: 1px solid #aaa;
-  border-radius: 4px;
-  background: white;
-  margin: 0 10px 10px 0;
+  border: 1px solid black;
+  display: block;
 }
 
-#log {
-  border: 1px solid #aaa;
-  border-radius: 4px;
-  background: #fafafa;
-  padding: 8px;
-  height: 120px;
-  overflow: auto;
-  font-size: 13px;
+progress {
+  width: 100%;
 }
 
-@media (max-width: 600px) {
-  #state-big {
-    font-size: 26px;
+@media (max-width: 700px) {
+  #panels {
+    display: block;
+  }
+  .panel {
+    margin-bottom: 12px;
   }
 }
