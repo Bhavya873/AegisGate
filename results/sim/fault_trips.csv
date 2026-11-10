@@ -1,0 +1,11 @@
+# provenance=sim-virtual
+# cmd=./build/aegis_lockstep --out results/sim/fault_trips.csv
+# period_us=5000
+# latency_us=(trip_tick-onset_tick)*period_us
+scenario,detected_by,threshold,onset_tick,trip_tick,latency_us,fault_code,tripped,motion_after_trip,duty_outside_running,final_theta_rad,max_abs_track_err_rad,nonzero_duty_ticks,spsc_pushed,spsc_dropped
+nominal,none,"n/a",,,,NONE,0,0,0,0.497419,0.022264,459,64,436
+heartbeat_drop,heartbeat,"heartbeat older than 50000 us",300,310,50000,HEARTBEAT,1,0,0,0.507891,0.022264,269,64,436
+shaft_stall,stall,"|duty| >= 0.60 and |sum encoder deltas| <= 1 over 3 ticks",80,83,15000,STALL,1,0,0,0.099484,0.123418,43,64,436
+gyro_bias,encoder/IMU disagreement,"|w_enc-w_gyro| > max(1.50, 0.25*max|w|) for 4 ticks",300,303,15000,DISAGREE,1,0,0,0.429351,0.022264,262,64,436
+overspeed,velocity,"|w_hat| > 12.0 rad/s for 1 tick",300,300,0,VELOCITY,1,0,0,25.499260,0.022264,259,64,436
+tracking_step,tracking error,"|ref-theta| > 0.20 rad for 2 ticks",300,301,5000,TRACKING,1,0,0,0.623083,1.000333,260,64,436

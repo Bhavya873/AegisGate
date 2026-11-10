@@ -1,0 +1,6 @@
+# provenance=host-wall-clock (not hardware, not a real-time OS)
+# cmd=./build-release/aegis_bench --out results/bench/step_timing.csv
+# build=Release host=Darwin arm64
+# workload=nominal scenario inputs replayed open loop, 500 steps
+metric,median_ns,p99_ns,max_ns,batches
+batch_mean_per_step,22.0,26.0,142.0,4000
