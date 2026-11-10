@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AegisGate demo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="page">
+    <h1>AegisGate demo</h1>
+    <p>A motor safety loop written in C, running in your browser. Press Arm, move the slider, then try to break it.</p>
+
+    <div id="status" class="state-init">
+      <div id="state-name">INIT</div>
+      <div id="fault-text"></div>
+      <div id="readouts">
+        <span>Time: <b id="r-time">0.00</b> s</span>
+        <span>Angle: <b id="r-angle">0.00</b> rad</span>
+        <span>Motor duty: <b id="r-duty">0</b> %</span>
+      </div>
+    </div>
+
+    <div class="row">
+      <button id="btn-arm">Arm</button>
+      <button id="btn-stop">Stop</button>
+      <button id="btn-reset">Reset</button>
+      <button id="btn-start-over">Start over</button>
+    </div>
+    <div class="row">
+      <label for="target">Target angle</label>
+      <input type="range" id="target" min="-1.5" max="1.5" step="0.01" value="0">
+      <span id="target-value">0.00</span> rad
+    </div>
+
+    <h2>Break it</h2>
+    <div class="row">
+      <button id="fault-0">Cut heartbeat</button>
+      <button id="fault-1">Jam shaft</button>
+      <button id="fault-2">Bad gyro</button>
+      <button id="fault-3">Spin too fast</button>
+      <button id="btn-jump">Jump target</button>
+    </div>
+    <p class="note">Jam shaft only trips once you move the slider.</p>
+
+    <canvas id="dial" width="220" height="220"></canvas>
+    <canvas id="chart" width="860" height="260"></canvas>
+
+    <h2>Log</h2>
+    <pre id="log"></pre>
+
+    <p class="note">Portfolio project, not a certified safety system.</p>
+  </div>
+
+  <script>var Module = { onRuntimeInitialized: function () { start(); } };</script>
+  <script src="aegis.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

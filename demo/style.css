@@ -1,0 +1,102 @@
+body {
+  font-family: Arial, sans-serif;
+  background: #f7f7f7;
+  color: #222;
+  margin: 0;
+  line-height: 1.4;
+}
+
+#page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 16px;
+  background: white;
+}
+
+h2 {
+  margin-top: 28px;
+  font-size: 20px;
+}
+
+.note { color: #666; font-size: 14px; }
+
+#status {
+  border: 1px solid #888;
+  border-radius: 4px;
+  padding: 12px;
+  margin: 16px 0;
+}
+
+#state-name {
+  font-size: 36px;
+  font-weight: bold;
+}
+
+#fault-text {
+  font-size: 18px;
+  min-height: 22px;
+  margin-bottom: 8px;
+}
+
+#readouts span {
+  display: inline-block;
+  margin-right: 16px;
+  font-size: 14px;
+}
+
+.state-init { background: #dddddd; }
+
+.state-armed { background: #bcd7f5; }
+
+.state-running { background: #b9e6b9; }
+
+.state-tripped { background: #f2b5b5; }
+
+.row { margin: 10px 0; }
+
+button {
+  font-size: 14px;
+  padding: 6px 12px;
+  margin: 0 6px 6px 0;
+  border: 1px solid #888;
+  border-radius: 4px;
+  background: #eeeeee;
+  cursor: pointer;
+}
+
+button.on {
+  background: orange;
+  border-color: #b36b00;
+  font-weight: bold;
+}
+
+input[type=range] {
+  width: 300px;
+  max-width: 60%;
+  vertical-align: middle;
+}
+
+canvas {
+  max-width: 100%;
+  border: 1px solid #aaa;
+  border-radius: 4px;
+  background: white;
+  display: block;
+  margin-bottom: 10px;
+}
+
+#log {
+  border: 1px solid #aaa;
+  border-radius: 4px;
+  background: #fafafa;
+  padding: 8px;
+  height: 120px;
+  overflow: auto;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  #state-name {
+    font-size: 28px;
+  }
+}
