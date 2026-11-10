@@ -1,0 +1,6 @@
+.git
+build
+build-*
+results
+third_party
+tests
