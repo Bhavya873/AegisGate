@@ -1,12 +1,6 @@
 #include "demo_api.h"
 
-#include "aegis/safety.h"
-#include "aegis/spsc.h"
-#include "aegis_config.h"
-#include "sim/plant.h"
-
-#include <math.h>
-#include <string.h>
+#include "sim/arm.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -15,183 +9,127 @@
 #define EXPORT
 #endif
 
-#define RAMP_RAD_S 1.0f
-#define GYRO_BIAS_RAD_S 5.0f
-#define SPIN_RAD_S 25.0f
-#define JUMP_RAD 1.0f
-
-static aegis_ctx_t ctx;
-static sim_plant_t plant;
-static aegis_spsc_t ring;
-static aegis_telem_t ring_storage[AEGIS_SPSC_CAP];
-static aegis_telem_t sample;
-
-static float applied_duty;
-static float target;
-static float ref;
-static int pending_cmd;
-static int jump_pending;
-static int faults[DEMO_FAULT_COUNT];
+static sim_arm_host_t host;
+static sim_arm_gated_t gated;
+static sim_arm_nogate_t nogate;
 static uint32_t tick;
+static int fault;
+static uint32_t fault_tick;
 
-EXPORT void demo_reset(void)
+static int bad_joint(int joint)
 {
-    aegis_status_t st;
+    return joint < 0 || joint >= AEGIS_ARM_JOINTS;
+}
 
-    aegis_init(&ctx);
-    sim_plant_init(&plant);
-    st = aegis_spsc_init(&ring, ring_storage, AEGIS_SPSC_CAP, (uint32_t)sizeof(aegis_telem_t));
-    (void)st;
-    memset(&sample, 0, sizeof(sample));
-    memset(faults, 0, sizeof(faults));
-    applied_duty = 0.0f;
-    target = 0.0f;
-    ref = 0.0f;
-    pending_cmd = 0;
-    jump_pending = 0;
+EXPORT void demo_arm_reset(void)
+{
+    sim_arm_host_init(&host);
+    sim_arm_gated_init(&gated);
+    sim_arm_nogate_init(&nogate);
     tick = 0;
+    fault = SIM_ARM_FAULT_NONE;
+    fault_tick = 0;
 }
 
-EXPORT void demo_send(int cmd)
+/* only one fault per run, press Start over for another */
+EXPORT void demo_arm_break(int new_fault)
 {
-    pending_cmd = cmd;
-}
-
-EXPORT void demo_set_target(float target_rad)
-{
-    target = target_rad;
-}
-
-EXPORT void demo_set_fault(int fault, int on)
-{
-    if (fault < 0 || fault >= DEMO_FAULT_COUNT) {
+    if (fault != SIM_ARM_FAULT_NONE) {
         return;
     }
-    faults[fault] = on ? 1 : 0;
+    if (new_fault <= SIM_ARM_FAULT_NONE || new_fault >= SIM_ARM_FAULT_COUNT) {
+        return;
+    }
+    fault = new_fault;
+    fault_tick = tick;
 }
 
-EXPORT void demo_jump_ref(void)
+/* both arms are stepped from the same command and the same fault */
+EXPORT void demo_arm_tick(void)
 {
-    jump_pending = 1;
-}
+    sim_arm_cmd_t cmd;
 
-/* the reference moves toward the slider target at a fixed speed so a normal move does not trip */
-static float move_ref(void)
-{
-    float step = RAMP_RAD_S * AEGIS_DT_S;
-
-    if (jump_pending) {
-        jump_pending = 0;
-        ref = ref + JUMP_RAD;
-        return 0.0f;
-    }
-    if (target > ref + step) {
-        ref = ref + step;
-        return RAMP_RAD_S;
-    }
-    if (target < ref - step) {
-        ref = ref - step;
-        return -RAMP_RAD_S;
-    }
-    ref = target;
-    return 0.0f;
-}
-
-EXPORT void demo_tick(void)
-{
-    aegis_inputs_t in;
-    aegis_outputs_t out;
-
-    if (faults[DEMO_FAULT_JAM]) {
-        sim_plant_freeze(&plant);
-    } else if (faults[DEMO_FAULT_SPIN]) {
-        sim_plant_force_omega(&plant, SPIN_RAD_S, AEGIS_DT_S);
-    } else {
-        sim_plant_step(&plant, applied_duty, AEGIS_DT_S);
-    }
-
-    memset(&in, 0, sizeof(in));
-    in.now_us = (uint64_t)tick * AEGIS_PERIOD_US;
-    in.enc_count = plant.enc_count;
-    in.gyro_rad_s = plant.omega_rad_s;
-    if (faults[DEMO_FAULT_GYRO_BIAS]) {
-        in.gyro_rad_s = in.gyro_rad_s + GYRO_BIAS_RAD_S;
-    }
-    if (faults[DEMO_FAULT_GYRO_NAN]) {
-        in.gyro_rad_s = NAN;
-    }
-    in.hb_valid = !faults[DEMO_FAULT_HEARTBEAT];
-
-    if (pending_cmd == DEMO_CMD_ARM) {
-        in.cmd = AEGIS_CMD_ARM;
-    } else if (pending_cmd == DEMO_CMD_STOP) {
-        in.cmd = AEGIS_CMD_STOP;
-    } else if (pending_cmd == DEMO_CMD_RESET) {
-        in.cmd = AEGIS_CMD_RESET;
-    } else {
-        in.cmd = AEGIS_CMD_TRAJ;
-        in.ref_vel_rad_s = move_ref();
-        in.ref_pos_rad = ref;
-    }
-    pending_cmd = 0;
-
-    aegis_step(&ctx, &in, &out);
-    applied_duty = (float)out.act.duty_permille / 1000.0f;
-
-    /* while not running, keep the reference on the shaft so the next move starts from there */
-    if (out.telem.state != AEGIS_STATE_RUNNING) {
-        ref = out.telem.theta_rad;
-        jump_pending = 0;
-    }
-
-    (void)aegis_spsc_push(&ring, &out.telem);
+    sim_arm_host_step(&host, tick, (sim_arm_fault_t)fault, &cmd);
+    sim_arm_nogate_step(&nogate, tick, &cmd);
+    sim_arm_gated_step(&gated, tick, &cmd);
     tick = tick + 1;
 }
 
-EXPORT int demo_pop(void)
+EXPORT int demo_arm_tick_count(void)
 {
-    if (aegis_spsc_pop(&ring, &sample)) {
-        return 1;
+    return (int)tick;
+}
+
+EXPORT int demo_arm_fault(void)
+{
+    return fault;
+}
+
+EXPORT int demo_arm_fault_tick(void)
+{
+    return (int)fault_tick;
+}
+
+EXPORT float demo_arm_angle(int side, int joint)
+{
+    if (bad_joint(joint)) {
+        return 0.0f;
     }
-    return 0;
+    if (side == DEMO_SIDE_GATED) {
+        return gated.joint[joint].theta_rad;
+    }
+    return nogate.joint[joint].theta_rad;
 }
 
-EXPORT int demo_tick_count(void)
+EXPORT float demo_arm_speed(int side, int joint)
 {
-    return (int)sample.tick;
+    if (bad_joint(joint)) {
+        return 0.0f;
+    }
+    if (side == DEMO_SIDE_GATED) {
+        return gated.joint[joint].omega_rad_s;
+    }
+    return nogate.joint[joint].omega_rad_s;
 }
 
-EXPORT float demo_angle(void)
+EXPORT int demo_arm_duty(int side, int joint)
 {
-    return sample.theta_rad;
+    if (bad_joint(joint)) {
+        return 0;
+    }
+    if (side == DEMO_SIDE_GATED) {
+        return gated.telem[joint].duty_permille;
+    }
+    return nogate.duty_permille[joint];
 }
 
-EXPORT float demo_ref(void)
+EXPORT float demo_arm_link(int joint)
 {
-    return sample.ref_rad;
+    if (joint == 0) {
+        return AEGIS_ARM_LINK0_M;
+    }
+    return AEGIS_ARM_LINK1_M;
 }
 
-EXPORT float demo_speed(void)
+EXPORT int demo_arm_state(int joint)
 {
-    return sample.omega_rad_s;
+    if (bad_joint(joint)) {
+        return AEGIS_STATE_TRIPPED;
+    }
+    return gated.telem[joint].state;
 }
 
-EXPORT int demo_duty(void)
+EXPORT int demo_arm_tripped(void)
 {
-    return sample.duty_permille;
+    return gated.tripped ? 1 : 0;
 }
 
-EXPORT int demo_state(void)
+EXPORT int demo_arm_trip_fault(void)
 {
-    return sample.state;
+    return gated.trip_fault;
 }
 
-EXPORT int demo_fault(void)
+EXPORT int demo_arm_trip_tick(void)
 {
-    return sample.fault;
-}
-
-EXPORT int demo_dropped(void)
-{
-    return (int)ring.dropped;
+    return (int)gated.trip_tick;
 }

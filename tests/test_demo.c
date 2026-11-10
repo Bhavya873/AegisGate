@@ -3,10 +3,17 @@
 #include "aegis/types.h"
 #include "aegis_config.h"
 #include "demo_api.h"
+#include "sim/arm.h"
+
+#include <math.h>
+#include <string.h>
+
+#define WARMUP_TICKS 300
+#define AFTER_TICKS 400
 
 void setUp(void)
 {
-    demo_reset();
+    demo_arm_reset();
 }
 
 void tearDown(void)
@@ -18,170 +25,149 @@ static void run_ticks(int n)
     int i;
 
     for (i = 0; i < n; i++) {
-        demo_tick();
-        while (demo_pop()) {
+        demo_arm_tick();
+    }
+}
+
+static int abs_int(int x)
+{
+    if (x < 0) {
+        return -x;
+    }
+    return x;
+}
+
+/* breaks the arm, then checks the gated side has zero duty on every later tick */
+static void break_and_check_gated(int fault, int expected_check)
+{
+    int i;
+    int j;
+
+    run_ticks(WARMUP_TICKS);
+    TEST_ASSERT_EQUAL_INT(0, demo_arm_tripped());
+    demo_arm_break(fault);
+
+    for (i = 0; i < AFTER_TICKS; i++) {
+        demo_arm_tick();
+        /* the joint that did not trip is told to stop one tick later */
+        if (demo_arm_tripped() && demo_arm_tick_count() - 1 > demo_arm_trip_tick() + 1) {
+            for (j = 0; j < AEGIS_ARM_JOINTS; j++) {
+                TEST_ASSERT_EQUAL_INT(0, demo_arm_duty(DEMO_SIDE_GATED, j));
+                TEST_ASSERT_NOT_EQUAL(AEGIS_STATE_RUNNING, demo_arm_state(j));
+            }
+        }
+    }
+
+    TEST_ASSERT_EQUAL_INT(1, demo_arm_tripped());
+    TEST_ASSERT_EQUAL_INT(expected_check, demo_arm_trip_fault());
+    for (j = 0; j < AEGIS_ARM_JOINTS; j++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, demo_arm_speed(DEMO_SIDE_GATED, j));
+    }
+}
+
+static void test_no_fault_both_arms_follow_the_sweep(void)
+{
+    int i;
+    int j;
+
+    for (i = 0; i < 2000; i++) {
+        demo_arm_tick();
+        for (j = 0; j < AEGIS_ARM_JOINTS; j++) {
+            float a = demo_arm_angle(DEMO_SIDE_NOGATE, j);
+            float b = demo_arm_angle(DEMO_SIDE_GATED, j);
+            TEST_ASSERT_FLOAT_WITHIN(0.02f, a, b);
+        }
+    }
+    TEST_ASSERT_EQUAL_INT(0, demo_arm_tripped());
+    TEST_ASSERT_EQUAL_INT(AEGIS_STATE_RUNNING, demo_arm_state(0));
+    TEST_ASSERT_EQUAL_INT(AEGIS_STATE_RUNNING, demo_arm_state(1));
+}
+
+static void test_jam_gate_stops_nogate_keeps_pushing(void)
+{
+    break_and_check_gated(SIM_ARM_FAULT_JAM, AEGIS_FAULT_STALL);
+    TEST_ASSERT_TRUE(abs_int(demo_arm_duty(DEMO_SIDE_NOGATE, AEGIS_ARM_FAULT_JOINT)) >= 600);
+}
+
+static void test_frozen_encoder_gate_stops_nogate_spins(void)
+{
+    break_and_check_gated(SIM_ARM_FAULT_SENSOR, AEGIS_FAULT_DISAGREE);
+    TEST_ASSERT_TRUE(fabsf(demo_arm_speed(DEMO_SIDE_NOGATE, AEGIS_ARM_FAULT_JOINT)) > AEGIS_V_MAX_RAD_S);
+}
+
+static void test_silent_host_gate_stops_nogate_keeps_driving(void)
+{
+    break_and_check_gated(SIM_ARM_FAULT_SILENT, AEGIS_FAULT_HEARTBEAT);
+    TEST_ASSERT_TRUE(demo_arm_duty(DEMO_SIDE_NOGATE, AEGIS_ARM_FAULT_JOINT) != 0);
+    TEST_ASSERT_TRUE(fabsf(demo_arm_speed(DEMO_SIDE_NOGATE, AEGIS_ARM_FAULT_JOINT)) > 0.3f);
+}
+
+static void test_runaway_gate_stops_nogate_spins(void)
+{
+    break_and_check_gated(SIM_ARM_FAULT_RUNAWAY, AEGIS_FAULT_TRACKING);
+    TEST_ASSERT_TRUE(fabsf(demo_arm_speed(DEMO_SIDE_NOGATE, AEGIS_ARM_FAULT_JOINT)) > AEGIS_V_MAX_RAD_S);
+}
+
+static void test_only_first_break_counts(void)
+{
+    run_ticks(WARMUP_TICKS);
+    demo_arm_break(SIM_ARM_FAULT_JAM);
+    demo_arm_break(SIM_ARM_FAULT_RUNAWAY);
+    TEST_ASSERT_EQUAL_INT(SIM_ARM_FAULT_JAM, demo_arm_fault());
+    demo_arm_reset();
+    demo_arm_break(99);
+    TEST_ASSERT_EQUAL_INT(SIM_ARM_FAULT_NONE, demo_arm_fault());
+}
+
+static void record_run(int fault, float *angles, int *duties)
+{
+    int i;
+    int n = 0;
+
+    demo_arm_reset();
+    for (i = 0; i < WARMUP_TICKS + AFTER_TICKS; i++) {
+        int side;
+        int j;
+
+        if (i == WARMUP_TICKS) {
+            demo_arm_break(fault);
+        }
+        demo_arm_tick();
+        for (side = 0; side < 2; side++) {
+            for (j = 0; j < AEGIS_ARM_JOINTS; j++) {
+                angles[n] = demo_arm_angle(side, j);
+                duties[n] = demo_arm_duty(side, j);
+                n++;
+            }
         }
     }
 }
 
-static void start_running(void)
+static void test_same_inputs_give_same_output(void)
 {
-    run_ticks(5);
-    demo_send(DEMO_CMD_ARM);
-    run_ticks(1);
-    TEST_ASSERT_EQUAL_INT(AEGIS_STATE_RUNNING, demo_state());
-}
+    static float angles_a[(WARMUP_TICKS + AFTER_TICKS) * 2 * AEGIS_ARM_JOINTS];
+    static float angles_b[(WARMUP_TICKS + AFTER_TICKS) * 2 * AEGIS_ARM_JOINTS];
+    static int duties_a[(WARMUP_TICKS + AFTER_TICKS) * 2 * AEGIS_ARM_JOINTS];
+    static int duties_b[(WARMUP_TICKS + AFTER_TICKS) * 2 * AEGIS_ARM_JOINTS];
+    int fault;
 
-/* runs until the loop trips and returns how many ticks that took, or -1 */
-static int ticks_until_trip(int max_ticks)
-{
-    int i;
-
-    for (i = 1; i <= max_ticks; i++) {
-        run_ticks(1);
-        if (demo_state() == AEGIS_STATE_TRIPPED) {
-            return i;
-        }
+    for (fault = SIM_ARM_FAULT_NONE; fault < SIM_ARM_FAULT_COUNT; fault++) {
+        record_run(fault, angles_a, duties_a);
+        record_run(fault, angles_b, duties_b);
+        TEST_ASSERT_EQUAL_INT(0, memcmp(angles_a, angles_b, sizeof(angles_a)));
+        TEST_ASSERT_EQUAL_INT(0, memcmp(duties_a, duties_b, sizeof(duties_a)));
     }
-    return -1;
-}
-
-static void test_boots_armed_with_no_duty(void)
-{
-    run_ticks(20);
-    TEST_ASSERT_EQUAL_INT(AEGIS_STATE_ARMED, demo_state());
-    TEST_ASSERT_EQUAL_INT(0, demo_duty());
-}
-
-static void test_follows_target_without_tripping(void)
-{
-    start_running();
-    demo_set_target(1.0f);
-    run_ticks(600);
-    TEST_ASSERT_EQUAL_INT(AEGIS_STATE_RUNNING, demo_state());
-    TEST_ASSERT_FLOAT_WITHIN(0.05f, 1.0f, demo_angle());
-
-    demo_set_target(-1.5f);
-    run_ticks(1000);
-    TEST_ASSERT_EQUAL_INT(AEGIS_STATE_RUNNING, demo_state());
-    TEST_ASSERT_FLOAT_WITHIN(0.05f, -1.5f, demo_angle());
-}
-
-static void test_heartbeat_cut_trips(void)
-{
-    start_running();
-    demo_set_fault(DEMO_FAULT_HEARTBEAT, 1);
-    TEST_ASSERT_TRUE(ticks_until_trip(50) > 0);
-    TEST_ASSERT_EQUAL_INT(AEGIS_FAULT_HEARTBEAT, demo_fault());
-}
-
-static void test_jam_trips_stall_when_target_moves(void)
-{
-    start_running();
-    demo_set_fault(DEMO_FAULT_JAM, 1);
-    demo_set_target(1.0f);
-    TEST_ASSERT_TRUE(ticks_until_trip(200) > 0);
-    TEST_ASSERT_EQUAL_INT(AEGIS_FAULT_STALL, demo_fault());
-}
-
-static void test_gyro_bias_trips_disagree(void)
-{
-    start_running();
-    demo_set_fault(DEMO_FAULT_GYRO_BIAS, 1);
-    TEST_ASSERT_EQUAL_INT((int)AEGIS_DISAGREE_TICKS, ticks_until_trip(50));
-    TEST_ASSERT_EQUAL_INT(AEGIS_FAULT_DISAGREE, demo_fault());
-}
-
-static void test_spin_trips_velocity(void)
-{
-    start_running();
-    demo_set_fault(DEMO_FAULT_SPIN, 1);
-    TEST_ASSERT_EQUAL_INT(1, ticks_until_trip(50));
-    TEST_ASSERT_EQUAL_INT(AEGIS_FAULT_VELOCITY, demo_fault());
-}
-
-static void test_gyro_nan_trips_numeric(void)
-{
-    start_running();
-    demo_set_fault(DEMO_FAULT_GYRO_NAN, 1);
-    TEST_ASSERT_EQUAL_INT(1, ticks_until_trip(50));
-    TEST_ASSERT_EQUAL_INT(AEGIS_FAULT_NUMERIC, demo_fault());
-}
-
-static void test_ref_jump_trips_tracking(void)
-{
-    start_running();
-    demo_jump_ref();
-    TEST_ASSERT_TRUE(ticks_until_trip(50) > 0);
-    TEST_ASSERT_EQUAL_INT(AEGIS_FAULT_TRACKING, demo_fault());
-}
-
-static void test_no_duty_after_trip_and_reset_goes_to_armed(void)
-{
-    int i;
-
-    start_running();
-    demo_set_target(1.0f);
-    run_ticks(50);
-    demo_set_fault(DEMO_FAULT_GYRO_BIAS, 1);
-    TEST_ASSERT_TRUE(ticks_until_trip(50) > 0);
-    demo_set_fault(DEMO_FAULT_GYRO_BIAS, 0);
-
-    for (i = 0; i < 100; i++) {
-        run_ticks(1);
-        TEST_ASSERT_EQUAL_INT(AEGIS_STATE_TRIPPED, demo_state());
-        TEST_ASSERT_EQUAL_INT(0, demo_duty());
-    }
-
-    demo_send(DEMO_CMD_RESET);
-    run_ticks(1);
-    TEST_ASSERT_EQUAL_INT(AEGIS_STATE_ARMED, demo_state());
-    run_ticks(20);
-    TEST_ASSERT_EQUAL_INT(AEGIS_STATE_ARMED, demo_state());
-    TEST_ASSERT_EQUAL_INT(0, demo_duty());
-
-    demo_send(DEMO_CMD_ARM);
-    run_ticks(1);
-    TEST_ASSERT_EQUAL_INT(AEGIS_STATE_RUNNING, demo_state());
-}
-
-static void test_cannot_arm_without_heartbeat(void)
-{
-    run_ticks(5);
-    demo_set_fault(DEMO_FAULT_HEARTBEAT, 1);
-    demo_send(DEMO_CMD_ARM);
-    run_ticks(5);
-    TEST_ASSERT_EQUAL_INT(AEGIS_STATE_ARMED, demo_state());
-}
-
-static void test_ring_drops_when_nobody_reads(void)
-{
-    int i;
-    int got = 0;
-
-    for (i = 0; i < 100; i++) {
-        demo_tick();
-    }
-    while (demo_pop()) {
-        got++;
-    }
-    TEST_ASSERT_EQUAL_INT(100, got + demo_dropped());
-    TEST_ASSERT_TRUE(demo_dropped() > 0);
 }
 
 int main(void)
 {
     UNITY_BEGIN();
-    RUN_TEST(test_boots_armed_with_no_duty);
-    RUN_TEST(test_follows_target_without_tripping);
-    RUN_TEST(test_heartbeat_cut_trips);
-    RUN_TEST(test_jam_trips_stall_when_target_moves);
-    RUN_TEST(test_gyro_bias_trips_disagree);
-    RUN_TEST(test_spin_trips_velocity);
-    RUN_TEST(test_gyro_nan_trips_numeric);
-    RUN_TEST(test_ref_jump_trips_tracking);
-    RUN_TEST(test_no_duty_after_trip_and_reset_goes_to_armed);
-    RUN_TEST(test_cannot_arm_without_heartbeat);
-    RUN_TEST(test_ring_drops_when_nobody_reads);
+    RUN_TEST(test_no_fault_both_arms_follow_the_sweep);
+    RUN_TEST(test_jam_gate_stops_nogate_keeps_pushing);
+    RUN_TEST(test_frozen_encoder_gate_stops_nogate_spins);
+    RUN_TEST(test_silent_host_gate_stops_nogate_keeps_driving);
+    RUN_TEST(test_runaway_gate_stops_nogate_spins);
+    RUN_TEST(test_only_first_break_counts);
+    RUN_TEST(test_same_inputs_give_same_output);
     return UNITY_END();
 }
